@@ -1,2 +1,3 @@
-# Power358.github.io
-profile ตัวเองอย่างสั้น
+# [Kittikan boonlorh art]
+profile kittikan boolorh
+lect, kittikan boonlorh
