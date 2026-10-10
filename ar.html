@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>AR.js - Epona 3D Model</title>
+
+  <!-- A-Frame -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <!-- AR.js (image tracking / NFT) -->
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #info {
+      position: fixed; top: 10px; left: 0; right: 0;
+      text-align: center; color: #fff; font-family: sans-serif;
+      text-shadow: 0 0 4px #000; z-index: 10; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">ส่องกล้องไปที่ marker: aitutorialcourse.github.io/tracker.png</div>
+
+  <a-scene
+    vr-mode-ui="enabled: false"
+    renderer="logarithmicDepthBuffer: true; colorManagement: true; alpha: true;"
+    embedded
+    arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;">
+
+    <!-- โหลดโมเดลล่วงหน้า -->
+    <a-assets timeout="30000">
+      <a-asset-item id="epona" src="https://sibsansuk.github.io/epona.glb"></a-asset-item>
+    </a-assets>
+
+    <!-- NFT marker: ต้องมีไฟล์ descriptors (.iset, .fset, .fset3) -->
+    <a-nft
+      type="nft"
+      url="https://aitutorialcourse.github.io/tracker"
+      smooth="true"
+      smoothCount="10"
+      smoothTolerance="0.01"
+      smoothThreshold="5">
+
+      <a-entity
+        gltf-model="#epona"
+        animation-mixer="clip: *; loop: repeat"
+        scale="5 5 5"
+        position="150 150 -100"
+        rotation="90 0 0">
+      </a-entity>
+    </a-nft>
+
+    <a-entity camera></a-entity>
+  </a-scene>
+</body>
+</html>
