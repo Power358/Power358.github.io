@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>AR.js — Epona GLB Demo</title>
+
+  <!-- A-Frame + AR.js pattern tracking + GLTF animation support -->
+  <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.5.0/dist/aframe-extras.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.8/aframe/build/aframe-ar.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/marker-creator@0.1.0/dist/marker-creator.umd.js"></script>
+
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #080b10; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    body { position: fixed; inset: 0; }
+    a-scene { position: fixed; inset: 0; width: 100%; height: 100%; }
+    #hud {
+      position: fixed; z-index: 1000; top: max(12px, env(safe-area-inset-top)); left: 12px; right: 12px;
+      padding: 12px 14px; border: 1px solid rgba(255,255,255,.16); border-radius: 14px;
+      background: rgba(8, 12, 19, .78); color: #fff; box-shadow: 0 8px 28px rgba(0,0,0,.22);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); pointer-events: none;
+    }
+    #title { font-weight: 700; font-size: 14px; letter-spacing: .02em; }
+    #status { margin-top: 4px; font-size: 13px; line-height: 1.45; color: #d8e0eb; }
+    #hint { margin-top: 5px; font-size: 11px; line-height: 1.4; color: #aeb8c7; }
+    #hud.error { border-color: rgba(255,120,120,.55); }
+    .a-enter-vr, .a-enter-ar { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="hud" role="status" aria-live="polite">
+    <div id="title">AR.js · Epona GLB</div>
+    <div id="status">กำลังเตรียม marker และโหลดโมเดล…</div>
+    <div id="hint">อนุญาตให้ใช้กล้อง แล้วหันกล้องไปยังภาพ tracker.png</div>
+  </div>
+
+  <a-scene
+    embedded
+    vr-mode-ui="enabled: false"
+    renderer="antialias: true; alpha: true; logarithmicDepthBuffer: true; precision: mediump"
+    arjs="sourceType: webcam; trackingMethod: best; detectionMode: mono; debugUIEnabled: false">
+    <a-entity camera></a-entity>
+  </a-scene>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const TRACKER_URL = 'https://aitutorialcourse.github.io/tracker.png';
+      const MODEL_URL = 'https://sibsansuk.github.io/epona.glb';
+      const hud = document.getElementById('hud');
+      const statusEl = document.getElementById('status');
+      const hintEl = document.getElementById('hint');
+      const scene = document.querySelector('a-scene');
+      let markerFound = false;
+      let modelLoaded = false;
+
+      function status(message, hint) {
+        statusEl.textContent = message;
+        if (hint !== undefined) hintEl.textContent = hint;
+      }
+      function fail(message, hint) {
+        hud.classList.add('error');
+        status(message, hint || 'ตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและสิทธิ์กล้อง แล้วโหลดหน้าใหม่');
+        console.error('[AR.js demo]', message);
+      }
+
+      // Fit the imported model to the marker and place its lowest point on the marker plane.
+      AFRAME.registerComponent('fit-marker-model', {
+        schema: { maxSize: { type: 'number', default: 0.72 } },
+        init() {
+          this.el.addEventListener('model-loaded', () => {
+            const mesh = this.el.getObject3D('mesh');
+            if (!mesh) return;
+            mesh.updateMatrixWorld(true);
+            const bounds = new THREE.Box3().setFromObject(mesh);
+            const size = bounds.getSize(new THREE.Vector3());
+            const maxDimension = Math.max(size.x, size.y, size.z);
+            if (!Number.isFinite(maxDimension) || maxDimension <= 0) return;
+
+            const center = bounds.getCenter(new THREE.Vector3());
+            const scale = this.data.maxSize / maxDimension;
+            this.el.object3D.scale.setScalar(scale);
+            this.el.object3D.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+            this.el.object3D.updateMatrixWorld(true);
+          });
+        }
+      });
+
+      function readTrackerAsInnerImageDataURL() {
+        return fetch(TRACKER_URL, { mode: 'cors', cache: 'force-cache' })
+          .then(response => {
+            if (!response.ok) throw new Error('โหลด tracker.png ไม่สำเร็จ: HTTP ' + response.status);
+            return response.blob();
+          })
+          .then(blob => new Promise((resolve, reject) => {
+            const image = new Image();
+            const objectURL = URL.createObjectURL(blob);
+            image.onload = () => {
+              try {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                // tracker.png is the printed marker. Exclude its outer dark frame when encoding its inner pattern.
+                const trimX = Math.round(image.naturalWidth * 0.042);
+                const trimY = Math.round(image.naturalHeight * 0.042);
+                const cropWidth = Math.max(1, image.naturalWidth - trimX * 2);
+                const cropHeight = Math.max(1, image.naturalHeight - trimY * 2);
+                canvas.width = cropWidth;
+                canvas.height = cropHeight;
+                ctx.drawImage(image, trimX, trimY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+                URL.revokeObjectURL(objectURL);
+                resolve(canvas.toDataURL('image/png'));
+              } catch (error) {
+                URL.revokeObjectURL(objectURL);
+                reject(error);
+              }
+            };
+            image.onerror = () => {
+              URL.revokeObjectURL(objectURL);
+              reject(new Error('อ่านภาพ tracker.png ไม่สำเร็จ'));
+            };
+            image.src = objectURL;
+          }));
+      }
+
+      function encodePattern(imageDataURL) {
+        return new Promise((resolve, reject) => {
+          const creator = window.MarkerCreator && window.MarkerCreator.ArPatternFile;
+          if (!creator || typeof creator.encodeImageURL !== 'function') {
+            reject(new Error('โหลด Marker-Creator ไม่สำเร็จ'));
+            return;
+          }
+          try {
+            creator.encodeImageURL(imageDataURL, patternText => {
+              if (typeof patternText !== 'string' || !patternText.trim()) {
+                reject(new Error('สร้าง pattern marker ไม่สำเร็จ'));
+                return;
+              }
+              resolve(patternText);
+            });
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }
+
+      function mountMarker(patternText) {
+        const pattBlob = new Blob([patternText], { type: 'text/plain' });
+        const pattURL = URL.createObjectURL(pattBlob);
+        const marker = document.createElement('a-marker');
+        marker.setAttribute('type', 'pattern');
+        marker.setAttribute('url', pattURL);
+        marker.setAttribute('size', '1');
+        marker.setAttribute('smooth', 'true');
+        marker.setAttribute('smooth-count', '10');
+        marker.setAttribute('smooth-tolerance', '0.01');
+        marker.setAttribute('smooth-threshold', '5');
+
+        const model = document.createElement('a-entity');
+        model.setAttribute('gltf-model', MODEL_URL);
+        model.setAttribute('fit-marker-model', 'maxSize: 0.72');
+        model.setAttribute('animation-mixer', 'clip: *; loop: repeat; timeScale: 1');
+        model.setAttribute('position', '0 0 0');
+        marker.appendChild(model);
+
+        marker.addEventListener('markerFound', () => {
+          markerFound = true;
+          status('พบ marker แล้ว · กำลังแสดงโมเดล 3D', 'ถือภาพ marker ให้อยู่ในกรอบกล้องเพื่อให้ติดตามได้ต่อเนื่อง');
+        });
+        marker.addEventListener('markerLost', () => {
+          markerFound = false;
+          status('ไม่พบ marker', 'หันกล้องไปที่ tracker.png อีกครั้ง และให้ภาพอยู่ในแสงสว่างเพียงพอ');
+        });
+        model.addEventListener('model-loaded', () => {
+          modelLoaded = true;
+          if (!markerFound) status('พร้อมแล้ว · หันกล้องไปที่ tracker.png', 'โมเดลจะปรากฏเมื่อ AR.js ตรวจพบ marker');
+        });
+        model.addEventListener('model-error', event => {
+          fail('โหลด epona.glb ไม่สำเร็จ', 'ตรวจสอบ URL ของโมเดลและการเชื่อมต่ออินเทอร์เน็ต');
+          console.error(event.detail);
+        });
+
+        // Add the marker after encoding so AR.js receives a valid .patt resource from this single HTML file.
+        scene.appendChild(marker);
+        status('กำลังเปิดกล้องและโหลดโมเดล…', 'หากเบราว์เซอร์ถามสิทธิ์ ให้เลือกอนุญาตกล้อง');
+      }
+
+      async function start() {
+        try {
+          status('กำลังอ่านภาพ marker…', 'ต้องเปิดผ่าน HTTPS หรือ localhost เพื่อให้เบราว์เซอร์ใช้กล้องได้');
+          const innerImage = await readTrackerAsInnerImageDataURL();
+          status('กำลังสร้าง pattern สำหรับ AR.js…', 'ขั้นตอนนี้จะทำอัตโนมัติ ไม่ต้องมีไฟล์ .patt เพิ่ม');
+          const patternText = await encodePattern(innerImage);
+          mountMarker(patternText);
+        } catch (error) {
+          fail('เตรียม AR ไม่สำเร็จ: ' + (error && error.message ? error.message : String(error)),
+            'ตรวจสอบว่า tracker.png เข้าถึงได้จากเว็บและเปิดหน้านี้ผ่าน HTTPS/localhost');
+          console.error(error);
+        }
+      }
+
+      scene.addEventListener('camera-error', event => {
+        fail('เปิดกล้องไม่สำเร็จ', 'อนุญาตสิทธิ์กล้องในเบราว์เซอร์ และเปิดหน้าเว็บผ่าน HTTPS หรือ localhost');
+        console.error(event.detail);
+      });
+
+      // Avoid leaving the ready message in place if loading is still ongoing.
+      setTimeout(() => {
+        if (!modelLoaded && !hud.classList.contains('error')) {
+          statusEl.textContent = 'กำลังโหลดโมเดล 3D…';
+        }
+      }, 12000);
+
+      start();
+    })();
+  </script>
+</body>
+</html>
