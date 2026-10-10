@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MindAR Blendshape</title>
+  <script type="importmap">
+    { "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "mindar-face-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-three.prod.js"
+    } }
+  </script>
+  <style>
+    body { margin: 0; }
+    #container { width: 100vw; height: 100vh; position: relative; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div id="container"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+    import { MindARThree } from 'mindar-face-three';
+
+    const mindar = new MindARThree({ container: document.querySelector('#container') });
+    const { renderer, scene, camera } = mindar;
+    // สร้าง environment texture แบบห้องสตูดิโอ เพื่อเพิ่มแสงและเงาสะท้อนให้โมเดล
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    const roomEnvironment = new RoomEnvironment();
+    const environmentTarget = pmremGenerator.fromScene(roomEnvironment);
+    scene.environment = environmentTarget.texture;
+    roomEnvironment.dispose();
+    pmremGenerator.dispose();
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
+    const model = await new GLTFLoader().loadAsync('https://raw.githubusercontent.com/Power358/Power358.github.io/85b1a8f4bca42413410b20ddac8550f1c7e800bb/FaceForTracked01.glb');
+    
+    model.scene.scale.setScalar(2);
+    // เลื่อนโมเดลลงมาอีกมาก เพื่อให้ตรงกับตำแหน่งใบหน้า
+    model.scene.position.set(0, -2.0, 0);
+    mindar.addAnchor(1).group.add(model.scene);
+    const meshes = [];
+    // รองรับ morph target/blendshape ของโมเดลที่ชื่อไม่ตรงกับ MediaPipe ทุกตัว
+    const aliases = {
+      eyeBlinkLeft: ['EyeBlink_L', 'Blink_L', 'EyeBlinkLeft'],
+      eyeBlinkRight: ['EyeBlink_R', 'Blink_R', 'EyeBlinkRight'],
+      eyeLookUpLeft: ['EyeLookUp_L', 'LookUp_L'],
+      eyeLookUpRight: ['EyeLookUp_R', 'LookUp_R'],
+      eyeLookDownLeft: ['EyeLookDown_L', 'LookDown_L'],
+      eyeLookDownRight: ['EyeLookDown_R', 'LookDown_R'],
+      browDownLeft: ['BrowDown_L', 'BrowDownLeft'],
+      browDownRight: ['BrowDown_R', 'BrowDownRight'],
+      browInnerUp: ['BrowInnerUp', 'BrowUp_C'],
+      browOuterUpLeft: ['BrowOuterUp_L', 'BrowOuterUpLeft'],
+      browOuterUpRight: ['BrowOuterUp_R', 'BrowOuterUpRight'],
+      jawOpen: ['JawOpen', 'MouthOpen'],
+      mouthSmileLeft: ['MouthSmile_L', 'MouthSmileLeft'],
+      mouthSmileRight: ['MouthSmile_R', 'MouthSmileRight'],
+      mouthFrownLeft: ['MouthFrown_L', 'MouthFrownLeft'],
+      mouthFrownRight: ['MouthFrown_R', 'MouthFrownRight']
+    };
+    const normalize = name => String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    model.scene.traverse(object => {
+      if (object.isMesh && object.morphTargetDictionary && object.morphTargetInfluences) {
+        meshes.push(object);
+        // ทำดัชนีชื่อแบบไม่สนตัวพิมพ์ใหญ่/เล็กและเครื่องหมาย _ - เว้นวรรค
+        object.userData.normalizedMorphTargets = {};
+        for (const [name, index] of Object.entries(object.morphTargetDictionary)) {
+          object.userData.normalizedMorphTargets[normalize(name)] = index;
+        }
+        console.log('Morph targets:', object.name, Object.keys(object.morphTargetDictionary));
+      }
+    });
+    if (meshes.length === 0) {
+      console.warn('โมเดลนี้ไม่พบ morph targets สำหรับขยับคิ้ว ตา หรือปาก');
+    }
+
+    await mindar.start();
+    function animate() {
+      const categories = mindar.getLatestEstimate()?.blendshapes?.categories ?? [];
+      for (const mesh of meshes) {
+        const dictionary = mesh.morphTargetDictionary;
+        const normalized = mesh.userData.normalizedMorphTargets;
+        for (const { categoryName, score } of categories) {
+          let index = dictionary[categoryName];
+          if (index === undefined) index = normalized[normalize(categoryName)];
+          if (index === undefined) {
+            for (const alias of aliases[categoryName] ?? []) {
+              index = dictionary[alias];
+              if (index === undefined) index = normalized[normalize(alias)];
+              if (index !== undefined) break;
+            }
+          }
+          if (index !== undefined) mesh.morphTargetInfluences[index] = score;
+        }
+      }
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+    animate();
+  </script>
+</body>
+</html>
